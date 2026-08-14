@@ -1,5 +1,5 @@
 {
-  "name": "dcli",
+  "name": "@harmattan666/dcli",
   "version": "0.1.1",
   "description": "dcli — DeepSeek agent 命令行工具，一条命令启动，无需端口",
   "type": "module",
@@ -11,6 +11,9 @@
     "runner",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6"
   },

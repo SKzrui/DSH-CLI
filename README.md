@@ -52,14 +52,14 @@ model's request prefix stay warm between messages.
 ## Install
 
 ```powershell
-# 方式 1：GitHub 拉取（获取源码 / 最新版）
+# 方式 1：npm 安装（推荐，一条命令装好 dcli + dsh 运行时）
+npm install -g @harmattan666/dcli
+
+# 方式 2：GitHub 拉取源码
 git clone https://github.com/SKzrui/DSH-CLI.git
 cd DSH-CLI
 npm install        # 安装依赖（@deepseek-ai/dsh 自动装）
 npm link           # 把 `dcli` 命令放到 PATH
-
-# 方式 2：直接装发布包（任何机器，一条命令装好 dcli + dsh 运行时）
-npm install -g dcli-0.1.1.tgz
 
 # 配置 API key 并启动
 dcli config set-api-key sk-...
