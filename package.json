@@ -17,5 +17,18 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "SKzrui",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SKzrui/DSH-CLI.git"
+  },
+  "keywords": [
+    "deepseek",
+    "cli",
+    "agent",
+    "terminal",
+    "ai",
+    "chat"
+  ]
 }
