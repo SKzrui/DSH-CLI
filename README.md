@@ -1,8 +1,6 @@
 # DSH-CLI (dcli) — a simple CLI for the DeepSeek agent
 
-> **DSH-CLI** is the repository name ([SKzrui/DSH-CLI](https://github.com/SKzrui/DSH-CLI));
-> the command-line tool is **`dcli`**. They are independent: the repo name is
-> the URL, `dcli` is what you type.
+> **DSH-CLI**是一款简洁的命令行工具，可在终端内与 DeepSeek 智能代理对话：一条命令即可启动，无需部署服务、无需占用端口，对话结束后自动退出。支持流式输出、工具调用、按目录独立恢复会话，同时支持 API Key 与模型参数配置。
 
 **dcli** is a simple command-line tool for chatting with the DeepSeek agent in
 your terminal: one command to start, no server, no port, done when you are.
@@ -104,19 +102,19 @@ exit any time and continue later, context intact.
 
 Interactive commands:
 
-| command                       | meaning                                   |
-| ----------------------------- | ----------------------------------------- |
-| `/help`                       | show this list                            |
-| `/sessions`                   | list recent sessions in this directory    |
-| `/resume <id>`                | switch to another session                 |
-| `/new`                        | start a fresh session                     |
-| `/apikey <key>`               | save the DeepSeek API key immediately     |
-| `/model`                      | show available models + current selection |
+| command                       | meaning                                                   |
+| ----------------------------- | --------------------------------------------------------- |
+| `/help`                       | show this list                                            |
+| `/sessions`                   | list recent sessions in this directory                    |
+| `/resume <id>`                | switch to another session                                 |
+| `/new`                        | start a fresh session                                     |
+| `/apikey <key>`               | save the DeepSeek API key immediately                     |
+| `/model`                      | show available models + current selection                 |
 | `/model pro`                  | switch model live (fuzzy match; no restart, context kept) |
-| `/reasoning <off\|high\|max>` | set reasoning effort live                |
-| `/session`                    | print the session id (for `--resume`)     |
-| `/clear`                      | clear the screen                          |
-| `/quit`                       | leave (also Ctrl+C at an empty prompt)    |
+| `/reasoning <off\|high\|max>` | set reasoning effort live                                 |
+| `/session`                    | print the session id (for `--resume`)                     |
+| `/clear`                      | clear the screen                                          |
+| `/quit`                       | leave (also Ctrl+C at an empty prompt)                    |
 
 The prompt supports shell-style editing: **↑/↓** browse command history,
 **←/→** move the caret, **Home/End**, **Backspace/Delete**. History is
