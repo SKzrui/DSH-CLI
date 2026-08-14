@@ -1021,6 +1021,7 @@ async function run(ctx, opts, exit) {
   const editor = new LineEditor();
   const renderer = makeRenderer();
   let handle = null; // { agent, dispose }
+  let liveSelection = null; // mutable {current, assembled} ref for the live agent
   let busy = false;
   let quitting = false;
   let cancelSent = false;
@@ -1028,13 +1029,14 @@ async function run(ctx, opts, exit) {
   const modelDesc = `${selection.provider}/${selection.model}`;
 
   // Re-read the live default selection on every agent start, so `/model` and
-  // `/reasoning` take effect immediately on the restarted agent.
+  // `/reasoning` are picked up by newly created agents too.
   const makeOptions = () => {
     const s = defaultModel.currentSelection();
     return { provider: s.provider, model: s.model };
   };
 
-  const wire = (agent) => {
+  const wire = (agent, selectionRef) => {
+    liveSelection = selectionRef;
     agent.ctx.on("session/event", (session, event) => {
       if (session === agent.session) renderer.event(session, event);
     });
@@ -1056,12 +1058,16 @@ async function run(ctx, opts, exit) {
         await Promise.race([handle.dispose(), sleep(2000)]);
       } catch {}
     }
+    // One mutable selection ref per agent: prompt assembly and request routing
+    // read it on every step, so mutating `current` switches the model live —
+    // no restart needed (see installModelSelection).
+    const selectionRef = { current: defaultModel.currentSelection(), assembled: undefined };
     const created = resumeId
       ? await agents.resume({
           resumeSessionId: SessionId(resumeId),
           agentOptions: makeOptions(),
           setup: (agentCtx) => {
-            installModelSelection(agentCtx, { current: defaultModel.currentSelection(), assembled: undefined });
+            installModelSelection(agentCtx, selectionRef);
           },
         })
       : await agents.create({
@@ -1069,11 +1075,11 @@ async function run(ctx, opts, exit) {
           meta: { cwd: process.cwd() },
           agentOptions: makeOptions(),
           setup: (agentCtx) => {
-            installModelSelection(agentCtx, { current: defaultModel.currentSelection(), assembled: undefined });
+            installModelSelection(agentCtx, selectionRef);
           },
         });
     handle = created;
-    wire(created.agent);
+    wire(created.agent, selectionRef);
     await created.agent.whenIdle();
     return created.agent;
   };
@@ -1349,20 +1355,14 @@ async function run(ctx, opts, exit) {
               );
               target = arg;
             }
-            await defaultModel.saveSelection({
+            const next = {
               provider: sel.provider,
               model: target,
               ...(sel.reasoningEffort ? { reasoningEffort: sel.reasoningEffort } : {}),
-            });
-            // Restart the live agent on the same session so the new model is
-            // active right away (the persisted log replays, continuity intact).
-            try {
-              await sessions.flush(current.session);
-              current = await startAgent(undefined, current.session.id);
-              process.stdout.write(paint(ansi.green, `  ✓ model → ${target}\n`));
-            } catch (error) {
-              process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
-            }
+            };
+            await defaultModel.saveSelection(next); // persists for future sessions
+            if (liveSelection) liveSelection.current = next; // live: applies to the next step
+            process.stdout.write(paint(ansi.green, `  ✓ model → ${target} (next message)\n`));
             continue;
           }
           case "/reasoning": {
@@ -1371,18 +1371,14 @@ async function run(ctx, opts, exit) {
               continue;
             }
             const sel = defaultModel.currentSelection();
-            await defaultModel.saveSelection({
+            const next = {
               provider: sel.provider,
               model: sel.model,
               reasoningEffort: arg,
-            });
-            try {
-              await sessions.flush(current.session);
-              current = await startAgent(undefined, current.session.id);
-              process.stdout.write(paint(ansi.green, `  ✓ reasoning → ${arg}\n`));
-            } catch (error) {
-              process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
-            }
+            };
+            await defaultModel.saveSelection(next); // persists for future sessions
+            if (liveSelection) liveSelection.current = next; // live: applies to the next step
+            process.stdout.write(paint(ansi.green, `  ✓ reasoning → ${arg} (next message)\n`));
             continue;
           }
           case "/clear":

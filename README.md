@@ -112,8 +112,8 @@ Interactive commands:
 | `/new`                        | start a fresh session                     |
 | `/apikey <key>`               | save the DeepSeek API key immediately     |
 | `/model`                      | show available models + current selection |
-| `/model pro`                  | switch model (fuzzy match; same session)  |
-| `/reasoning <off\|high\|max>` | set reasoning effort                      |
+| `/model pro`                  | switch model live (fuzzy match; no restart, context kept) |
+| `/reasoning <off\|high\|max>` | set reasoning effort live                |
 | `/session`                    | print the session id (for `--resume`)     |
 | `/clear`                      | clear the screen                          |
 | `/quit`                       | leave (also Ctrl+C at an empty prompt)    |
