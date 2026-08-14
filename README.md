@@ -1,4 +1,7 @@
-# dcli — DeepSeek agent 命令行工具
+# DSH-CLI（dcli）— DeepSeek agent 命令行工具
+
+> **DSH-CLI** 是仓库名（GitHub: [SKzrui/DSH-CLI](https://github.com/SKzrui/DSH-CLI)），
+> 命令行工具名是 **`dcli`** —— 两者不冲突：仓库名决定网址，`dcli` 决定你敲的命令。
 
 **dcli** 是一个简单的命令行工具：在终端里和 DeepSeek agent 对话，一条命令启动，
 无需启动服务、无需端口、聊完即走。支持流式回复、工具调用、会话恢复、
@@ -49,26 +52,25 @@ model's request prefix stay warm between messages.
 ## Install
 
 ```powershell
-# Any machine: one command installs dcli AND its @deepseek-ai/dsh runtime
+# 方式 1：GitHub 拉取（获取源码 / 最新版）
+git clone https://github.com/SKzrui/DSH-CLI.git
+cd DSH-CLI
+npm install        # 安装依赖（@deepseek-ai/dsh 自动装）
+npm link           # 把 `dcli` 命令放到 PATH
+
+# 方式 2：直接装发布包（任何机器，一条命令装好 dcli + dsh 运行时）
 npm install -g dcli-0.1.1.tgz
 
-# Machines that already have dsh (global or local) just work too — the
-# launcher searches the global prefix, ~/node_modules, the current
-# directory's node_modules, and every ancestor, in that order.
-
-dcli config set-api-key sk-...   # configure your key
-dcli                             # go
-```
-
-Development install (this repo):
-
-```powershell
-npm link          # puts `dcli` on PATH
-dcli --help       # first run creates the profile under $DSH_HOME/profiles/cli
+# 配置 API key 并启动
+dcli config set-api-key sk-...
+dcli
 ```
 
 No other setup is needed: the launcher self-heals the profile on every run
-(copies the runner, writes missing manifest/patch files).
+(copies the runner, writes missing manifest/patch files). Machines that
+already have dsh (global or local) just work too — the launcher searches the
+global prefix, `~/node_modules`, the current directory's `node_modules`, and
+every ancestor, in that order.
 
 ## Usage
 
