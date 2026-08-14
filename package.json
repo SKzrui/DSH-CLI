@@ -4,7 +4,7 @@
   "description": "dcli — DeepSeek agent 命令行工具，一条命令启动，无需端口",
   "type": "module",
   "bin": {
-    "dcli": "./bin/dcli.js"
+    "dcli": "bin/dcli.js"
   },
   "files": [
     "bin",
