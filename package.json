@@ -1,0 +1,21 @@
+{
+  "name": "dcli",
+  "version": "0.1.1",
+  "description": "dcli — DeepSeek agent 命令行工具，一条命令启动，无需端口",
+  "type": "module",
+  "bin": {
+    "dcli": "./bin/dcli.js"
+  },
+  "files": [
+    "bin",
+    "runner",
+    "README.md"
+  ],
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

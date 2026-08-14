@@ -1,0 +1,7 @@
+node_modules/
+.test-*/
+.fake-*/
+.npm-cache/
+*.tgz
+*.log
+test-editor-pty.mjs
