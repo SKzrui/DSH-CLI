@@ -28,7 +28,7 @@ export const name = "cli-runner";
 /** Core services required before a turn can start. */
 export const inject = ["agents", "agentDefaultModel", "sessions"];
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 // ---------------------------------------------------------------------------
 // Terminal helpers

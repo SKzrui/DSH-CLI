@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const requireFromHere = createRequire(import.meta.url);
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 // The dsh launcher owns `--version` for itself; intercept ours so `dcli
 // --version` reports dcli, not the harness — and touches nothing on disk.
