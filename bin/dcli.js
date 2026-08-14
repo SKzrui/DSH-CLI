@@ -25,11 +25,15 @@ if (process.argv.includes("--version") || process.argv.includes("-v")) {
 // 1. Locate the dsh installation.
 // ---------------------------------------------------------------------------
 function resolveDshBin() {
+  // Order matters: prefer the dsh version pinned as dcli's own dependency
+  // (root/node_modules), so a user's separately installed dsh at a different
+  // version never drifts dcli onto untested internals. Then the common
+  // install locations, then local/ancestor installs.
   const candidates = [
     process.env.DCLI_DSH_BIN,
+    join(root, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
     join(homedir(), "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
     join(process.env.APPDATA ?? "", "npm", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
-    join(root, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
     // Local installs: dsh living in the current directory's node_modules (or
     // any ancestor), e.g. D:\DCLI\node_modules\@deepseek-ai\dsh.
     join(process.cwd(), "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
