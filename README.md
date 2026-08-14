@@ -1,11 +1,13 @@
-# DSH-CLI（dcli）— DeepSeek agent 命令行工具
+# DSH-CLI (dcli) — a simple CLI for the DeepSeek agent
 
-> **DSH-CLI** 是仓库名（GitHub: [SKzrui/DSH-CLI](https://github.com/SKzrui/DSH-CLI)），
-> 命令行工具名是 **`dcli`** —— 两者不冲突：仓库名决定网址，`dcli` 决定你敲的命令。
+> **DSH-CLI** is the repository name ([SKzrui/DSH-CLI](https://github.com/SKzrui/DSH-CLI));
+> the command-line tool is **`dcli`**. They are independent: the repo name is
+> the URL, `dcli` is what you type.
 
-**dcli** 是一个简单的命令行工具：在终端里和 DeepSeek agent 对话，一条命令启动，
-无需启动服务、无需端口、聊完即走。支持流式回复、工具调用、会话恢复、
-API key / 模型配置。
+**dcli** is a simple command-line tool for chatting with the DeepSeek agent in
+your terminal: one command to start, no server, no port, done when you are.
+Supports streaming replies, tool calls, per-directory session resume, and
+API key / model configuration.
 
 It is a thin launcher around the Harness's own profile system: it maintains a
 `cli` profile (bundles `dsh-base` + `dsh-headless`) under `$DSH_HOME/profiles`
@@ -52,16 +54,16 @@ model's request prefix stay warm between messages.
 ## Install
 
 ```powershell
-# 方式 1：npm 安装（推荐，一条命令装好 dcli + dsh 运行时）
+# Option 1: npm (recommended — one command installs dcli + the dsh runtime)
 npm install -g @harmattan666/dcli
 
-# 方式 2：GitHub 拉取源码
+# Option 2: from source
 git clone https://github.com/SKzrui/DSH-CLI.git
 cd DSH-CLI
-npm install        # 安装依赖（@deepseek-ai/dsh 自动装）
-npm link           # 把 `dcli` 命令放到 PATH
+npm install        # pulls @deepseek-ai/dsh automatically
+npm link           # puts the `dcli` command on PATH
 
-# 配置 API key 并启动
+# Configure your API key and go
 dcli config set-api-key sk-...
 dcli
 ```
