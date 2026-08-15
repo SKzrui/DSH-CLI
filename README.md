@@ -89,12 +89,27 @@ dcli -c "continue the work"   # one-shot: run the task in the latest session
 page uses (`$DSH_HOME/.credentials.yaml` + `settings.yaml`):
 
 ```powershell
-dcli config                           # show provider/model/api-key status
+dcli config                           # show provider/model/api-key/endpoint
 dcli config set-api-key <key>         # store the DeepSeek API key
 dcli config unset-api-key             # remove the stored key
+dcli config set-base-url <url>        # custom API endpoint (intranet proxy etc.)
+dcli config unset-base-url            # reset endpoint to the default
 dcli config set-model <id> [--provider <p>] [--reasoning off|high|max]
 dcli config list-models               # available models (deepseek-v4-flash/pro)
 ```
+
+**Intranet / custom endpoint**: if the machine cannot reach
+`api.deepseek.com` (e.g. behind an intranet that only allows an internal
+relay), point dcli at the internal proxy — either persist it
+
+```powershell
+dcli config set-base-url http://10.0.0.5:8080/deepseek
+```
+
+or set it once per session with `/base-url <url>` inside the REPL. The
+endpoint is read per request, so it applies to the very next message. The
+`DEEPSEEK_BASE_URL` environment variable works too (lower priority than the
+stored value).
 
 Sessions persist per directory under `$DSH_HOME/sessions`, so `dcli -c` /
 `dcli -r` inside a project picks up exactly that project's conversations —

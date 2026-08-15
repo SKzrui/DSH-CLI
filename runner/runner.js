@@ -21,6 +21,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 
 /** Stable Cordis plugin name. */
@@ -350,6 +351,8 @@ Configuration:
   dcli config                           show current configuration
   dcli config set-api-key <key>         store the DeepSeek API key
   dcli config unset-api-key             remove the stored API key
+  dcli config set-base-url <url>        set a custom API endpoint (intranet proxy etc.)
+  dcli config unset-base-url            reset the endpoint to the default
   dcli config set-model <id> [--provider <p>] [--reasoning off|high|max]
   dcli config list-models [--provider <p>]
 
@@ -359,6 +362,7 @@ Interactive commands:
   /resume <id>     switch to another session
   /new             start a fresh session
   /apikey <key>    save the DeepSeek API key
+  /base-url <url>  set a custom API endpoint (intranet proxy etc.)
   /model           show / switch the model (e.g. /model pro, /model flash)
   /reasoning <off|high|max>   set the reasoning effort
   /session         print the current session id (for --resume)
@@ -852,6 +856,8 @@ function previewToolCall(name, rawArgs) {
 // ---------------------------------------------------------------------------
 const API_KEY_REF = "DEEPSEEK_API_KEY";
 const REASONING_EFFORTS = ["off", "high", "max"];
+const LLM_DEEPSEEK_NS = settingsNamespace("llm-deepseek");
+const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
 function parseConfigArgs(args) {
   const cmd = args[0] ?? "show";
@@ -868,25 +874,39 @@ function parseConfigArgs(args) {
 }
 
 function printConfigHelp() {
-  process.stdout.write(`dcli config — API key and model configuration.
+  process.stdout.write(`dcli config — API key / endpoint / model configuration.
 
 Usage:
   dcli config                          show current configuration
   dcli config set-api-key <key>        store the DeepSeek API key
   dcli config unset-api-key            remove the stored API key
+  dcli config set-base-url <url>       set a custom API endpoint (intranet proxy etc.)
+  dcli config unset-base-url           reset the endpoint to the default
   dcli config set-model <id> [--provider <p>] [--reasoning off|high|max]
   dcli config list-models [--provider <p>]
 `);
 }
 
 async function runConfig(services, args) {
-  const { credentials, agentDefaultModel, llm } = services;
+  const { credentials, agentDefaultModel, llm, settings } = services;
   const { cmd, opts, positionals } = parseConfigArgs(args);
   if (opts.help) {
     printConfigHelp();
     return 0;
   }
   const provider = opts.provider ?? agentDefaultModel.currentSelection().provider;
+
+  const effectiveBaseUrl = () => {
+    let resolved;
+    try {
+      resolved = settings?.get(LLM_DEEPSEEK_NS);
+    } catch {}
+    return (
+      resolved?.baseURL ??
+      process.env.DEEPSEEK_BASE_URL ??
+      DEFAULT_BASE_URL
+    );
+  };
 
   switch (cmd) {
     case "show": {
@@ -900,9 +920,37 @@ async function runConfig(services, args) {
         ? `configured (source: ${info.source})` + (info.writable ? "" : ", not writable — env shadows the file")
         : "not configured";
       process.stdout.write(`  api key:   ${keyState}\n`);
+      process.stdout.write(`  base url:  ${effectiveBaseUrl()}\n`);
       process.stdout.write(`  credentials file: ${join(resolveDshHome(), ".credentials.yaml")}\n`);
       process.stdout.write(`  settings file:    ${join(resolveDshHome(), "settings.yaml")}\n`);
       return 0;
+    }
+    case "set-base-url": {
+      const url = positionals[0];
+      if (!url) {
+        process.stdout.write(paint(ansi.red, "  ✘ usage: dcli config set-base-url <url>\n"));
+        return 1;
+      }
+      try {
+        await settings.update(LLM_DEEPSEEK_NS, { baseURL: url });
+        process.stdout.write(paint(ansi.green, `  ✓ base URL set: ${url}\n`));
+        return 0;
+      } catch (error) {
+        process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
+        return 1;
+      }
+    }
+    case "unset-base-url": {
+      try {
+        await settings.replace(LLM_DEEPSEEK_NS, {});
+        process.stdout.write(
+          paint(ansi.green, `  ✓ base URL reset to ${process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL}\n`)
+        );
+        return 0;
+      } catch (error) {
+        process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
+        return 1;
+      }
     }
     case "set-api-key": {
       const key = positionals[0];
@@ -999,6 +1047,7 @@ async function run(ctx, opts, exit) {
   const sessions = ctx.get("sessions");
   const credentials = ctx.get("credentials");
   const llm = ctx.get("llm");
+  const settings = ctx.get("settings");
   if (agents === undefined || defaultModel === undefined || sessions === undefined) {
     throw new Error("cli-runner: agents / agentDefaultModel / sessions services missing");
   }
@@ -1011,6 +1060,7 @@ async function run(ctx, opts, exit) {
         credentials: ctx.get("credentials"),
         agentDefaultModel: defaultModel,
         llm: ctx.get("llm"),
+        settings: ctx.get("settings"),
       },
       opts.configArgs
     );
@@ -1301,6 +1351,26 @@ async function run(ctx, opts, exit) {
             try {
               await credentials.set(credentialRef(API_KEY_REF), arg);
               process.stdout.write(paint(ansi.green, "  ✓ API key saved\n"));
+            } catch (error) {
+              process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
+            }
+            continue;
+          }
+          case "/base-url": {
+            if (arg === "") {
+              let resolved;
+              try {
+                resolved = settings?.get(LLM_DEEPSEEK_NS);
+              } catch {}
+              process.stdout.write(
+                `  base url: ${paint(ansi.cyan, resolved?.baseURL ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL)}\n`
+              );
+              process.stdout.write(paint(ansi.dim, "  usage: /base-url <url>  (also: dcli config set-base-url <url>)\n"));
+              continue;
+            }
+            try {
+              await settings.update(LLM_DEEPSEEK_NS, { baseURL: arg });
+              process.stdout.write(paint(ansi.green, `  ✓ base URL set: ${arg} (next message)\n`));
             } catch (error) {
               process.stdout.write(paint(ansi.red, `  ✘ ${error?.message ?? error}\n`));
             }
