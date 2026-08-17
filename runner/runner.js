@@ -1316,7 +1316,7 @@ async function run(ctx, opts, exit) {
   // in a weird state.
   const restoreTerminal = () => {
     try {
-      process.stdout.write("\x1b[?2004l"); // disable bracketed paste
+      if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l"); // disable bracketed paste
       if (process.stdin.isTTY && process.stdin.isRaw) process.stdin.setRawMode(false);
       process.stdin.pause();
     } catch {}
