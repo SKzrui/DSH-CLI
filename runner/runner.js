@@ -35,9 +35,10 @@ const VERSION = "0.1.2";
 // Terminal helpers
 // ---------------------------------------------------------------------------
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
-// Show the model's reasoning deltas (dim) even when piped — mostly a debugging
-// aid; on a TTY it is always shown.
-const showReasoning = tty || process.env.DCLI_SHOW_REASONING === "1";
+// Reasoning is COLLAPSED by default: only a "● thinking…" marker is shown, and
+// the text is collected (viewable with /thinking). Set DCLI_SHOW_REASONING=1
+// to stream the full reasoning inline instead.
+const streamReasoning = process.env.DCLI_SHOW_REASONING === "1";
 const ansi = {
   dim: (s) => `\x1b[2m${s}\x1b[22m`,
   cyan: (s) => `\x1b[36m${s}\x1b[39m`,
@@ -507,10 +508,14 @@ class LineEditor {
 // Argument parsing
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const opts = { mode: "interactive", resume: undefined, continue: false, list: false, config: false, configArgs: [], task: undefined, help: false, version: false };
+  const opts = { mode: "interactive", resume: undefined, continue: false, list: false, config: false, balance: false, configArgs: [], task: undefined, help: false, version: false };
   if (argv[0] === "config") {
     opts.config = true;
     opts.configArgs = argv.slice(1);
+    return opts;
+  }
+  if (argv[0] === "balance") {
+    opts.balance = true;
     return opts;
   }
   const rest = [];
@@ -548,7 +553,8 @@ Usage:
   dcli -r <id>, --resume <id>   resume a specific session
   dcli -c, --continue           continue the most recent session, no prompting
   dcli --list                   list recent sessions in this directory
-  dcli config                   show / configure API key and model (see below)
+  dcli config                   show / configure API key, endpoint, model
+  dcli balance                  show the account balance (from /user/balance)
   dcli "task text..."           answer one task and exit (scriptable)
   dcli --help                   this help
   dcli --version                print the version
@@ -569,8 +575,10 @@ Interactive commands:
   /new             start a fresh session
   /apikey <key>    save the DeepSeek API key
   /base-url <url>  set a custom API endpoint (intranet proxy etc.)
+  /balance         show the account balance
   /model           show / switch the model (e.g. /model pro, /model flash)
   /reasoning <off|high|max>   set the reasoning effort
+  /thinking        show the last turn's reasoning (collapsed by default)
   /session         print the current session id (for --resume)
   /clear           clear the screen
   /quit, /exit     leave (also Ctrl+C at an empty prompt)
@@ -793,6 +801,9 @@ function makeRenderer() {
   let pendingHeader = null; // possible table header, awaiting its separator
   let table = null; // { header: string[], rows: string[][] }
   let inCode = false; // inside a ``` fence → pass through raw
+  let reasoningBuf = ""; // collected reasoning (viewable with /thinking)
+  let reasoningChars = 0; // collapsed-reasoning length for the summary line
+  let lastReasoning = ""; // the most recent completed reasoning block
 
   const write = (s) => {
     if (s.length > 0) {
@@ -906,14 +917,17 @@ function makeRenderer() {
     }
   };
 
-  // Keep reasoning (dim) and answer (plain) on their own lines: every block
-  // transition starts on a fresh line instead of gluing the two together.
+  // Keep reasoning and answer on their own lines: every block transition
+  // starts on a fresh line instead of gluing the two together.
   const enterBlock = (type) => {
     if (activeType !== type) {
       if (activeType === "text") feedFlush();
       if (activeType !== null && !atLineStart()) write("\n");
-      if (type === "reasoning" && showReasoning) {
-        write(paint(ansi.dim, "  ● thinking…") + "\n");
+      if (type === "reasoning") {
+        // Start a new collapsed thinking block.
+        reasoningBuf = "";
+        reasoningChars = 0;
+        if (tty || streamReasoning) write(paint(ansi.dim, "  ● thinking…") + "\n");
       }
       activeType = type;
     }
@@ -934,8 +948,10 @@ function makeRenderer() {
             streamedAny = true;
             feed(chunk.text);
           } else if (chunk.type === "reasoning-delta") {
-            if (showReasoning) {
-              enterBlock("reasoning");
+            enterBlock("reasoning");
+            reasoningBuf += chunk.text;
+            reasoningChars += chunk.text.length;
+            if (streamReasoning) {
               streamedAny = true;
               write(paint(ansi.dim, chunk.text));
             }
@@ -971,6 +987,11 @@ function makeRenderer() {
           } else if (kind === "aborted") {
             write(paint(ansi.yellow, "\n  ⏹ interrupted\n"));
           }
+          // Collapse reasoning: one summary line instead of the wall of text.
+          if (reasoningBuf !== "") lastReasoning = reasoningBuf;
+          if (!streamReasoning && reasoningChars > 0 && tty) {
+            write(paint(ansi.dim, `  · thinking ${reasoningChars} chars (use /thinking or DCLI_SHOW_REASONING=1 to view)\n`));
+          }
           feedFlush();
           break;
         }
@@ -1001,6 +1022,11 @@ function makeRenderer() {
       pendingHeader = null;
       table = null;
       inCode = false;
+      reasoningBuf = "";
+      reasoningChars = 0;
+    },
+    lastReasoning() {
+      return lastReasoning;
     },
   };
 }
@@ -1244,6 +1270,68 @@ async function runConfig(services, args) {
 }
 
 // ---------------------------------------------------------------------------
+// Balance: read the account balance from the API's /user/balance endpoint.
+// ---------------------------------------------------------------------------
+function renderBalance(data) {
+  const infos = Array.isArray(data?.balance_infos) ? data.balance_infos : [];
+  const available = data?.is_available === true;
+  process.stdout.write(
+    paint(ansi.bold, "Balance") + "  " + (available ? paint(ansi.green, "✓ available") : paint(ansi.red, "✗ unavailable")) + "\n"
+  );
+  if (infos.length === 0) {
+    process.stdout.write(paint(ansi.dim, "  no balance info\n"));
+    return;
+  }
+  for (const b of infos) {
+    const total = b.total_balance ?? "?";
+    const topped = b.topped_up_balance ?? "0.00";
+    const granted = b.granted_balance ?? "0.00";
+    process.stdout.write(
+      `  ${paint(ansi.cyan, b.currency ?? "?")}  总余额 ${paint(ansi.bold, total)}  (充值 ${topped} / 赠送 ${granted})\n`
+    );
+  }
+}
+
+async function fetchBalance(credentials, settings) {
+  const cred = await credentials.resolve(credentialRef(API_KEY_REF)).catch(() => undefined);
+  const key = cred?.value ?? process.env.DEEPSEEK_API_KEY;
+  if (!key) {
+    process.stdout.write(paint(ansi.yellow, "  no API key configured — run: dcli config set-api-key <key>\n"));
+    return 1;
+  }
+  let resolved;
+  try {
+    resolved = settings?.get(LLM_DEEPSEEK_NS);
+  } catch {}
+  const base = resolved?.baseURL ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL;
+  const url = base.replace(/\/+$/, "") + "/user/balance";
+  let res;
+  try {
+    res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+  } catch (error) {
+    process.stdout.write(paint(ansi.red, `  ✘ cannot reach ${url}: ${error?.message ?? error}\n`));
+    return 1;
+  }
+  if (res.status === 404) {
+    process.stdout.write(paint(ansi.yellow, `  ✘ this endpoint does not expose /user/balance (custom base url?)\n`));
+    return 1;
+  }
+  if (!res.ok) {
+    process.stdout.write(paint(ansi.red, `  ✘ HTTP ${res.status}\n`));
+    return 1;
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    process.stdout.write(paint(ansi.red, "  ✘ invalid response\n"));
+    return 1;
+  }
+  renderBalance(data);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Core driver
 // ---------------------------------------------------------------------------
 async function run(ctx, opts, exit) {
@@ -1270,6 +1358,13 @@ async function run(ctx, opts, exit) {
       },
       opts.configArgs
     );
+    exit(code);
+    return;
+  }
+
+  // ---- balance mode -------------------------------------------------------
+  if (opts.balance) {
+    const code = await fetchBalance(ctx.get("credentials"), ctx.get("settings"));
     exit(code);
     return;
   }
@@ -1583,6 +1678,10 @@ async function run(ctx, opts, exit) {
             }
             continue;
           }
+          case "/balance": {
+            await fetchBalance(credentials, settings);
+            continue;
+          }
           case "/model": {
             const sel = defaultModel.currentSelection();
             if (arg === "") {
@@ -1656,6 +1755,18 @@ async function run(ctx, opts, exit) {
             await defaultModel.saveSelection(next); // persists for future sessions
             if (liveSelection) liveSelection.current = next; // live: applies to the next step
             process.stdout.write(paint(ansi.green, `  ✓ reasoning → ${arg} (next message)\n`));
+            continue;
+          }
+          case "/thinking": {
+            const reasoning = renderer.lastReasoning();
+            if (reasoning) {
+              process.stdout.write(paint(ansi.dim, "  ── thinking ──\n"));
+              process.stdout.write(paint(ansi.dim, reasoning));
+              if (!reasoning.endsWith("\n")) process.stdout.write("\n");
+              process.stdout.write(paint(ansi.dim, "  ──────────────\n"));
+            } else {
+              process.stdout.write(paint(ansi.dim, "  no reasoning recorded for the last turn\n"));
+            }
             continue;
           }
           case "/clear":
