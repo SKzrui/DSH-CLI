@@ -95,6 +95,10 @@ class LineEditor {
     this._lastKey = 0; // timestamp of the last key event (paste detection)
     this._inPaste = false; // sticky paste window across chunks
     this._inBracketPaste = false; // inside \x1b[200~…\x1b[201~ (bracketed paste)
+    this._dirty = false; // input changed since the last redraw (batch redraws)
+    this._enterTimer = null; // pending deferred-Enter timer
+    this._enterWasCR = false; // the pending newline was a \r (for CRLF dedupe)
+    this._prevWasCR = false;
     this._history = []; // submitted prompt lines (raw mode)
     this._histIdx = -1; // -1 = editing a fresh line, >= 0 = history entry
     this._draft = ""; // the fresh line saved while browsing history
@@ -150,7 +154,7 @@ class LineEditor {
       this._cursorCol = col + 1;
     }
     this._line = parts.join("\n");
-    this._redraw();
+    this._dirty = true;
   }
 
   _backspace() {
@@ -169,7 +173,7 @@ class LineEditor {
       return;
     }
     this._line = parts.join("\n");
-    this._redraw();
+    this._dirty = true;
   }
 
   _delete() {
@@ -184,7 +188,7 @@ class LineEditor {
       return;
     }
     this._line = parts.join("\n");
-    this._redraw();
+    this._dirty = true;
   }
 
   _cursorLeft() {
@@ -197,7 +201,7 @@ class LineEditor {
     } else {
       return;
     }
-    this._redraw();
+    this._dirty = true;
   }
 
   _cursorRight() {
@@ -211,14 +215,14 @@ class LineEditor {
     } else {
       return;
     }
-    this._redraw();
+    this._dirty = true;
   }
 
   _cursorUp() {
     if (this._cursorLine > 0) {
       this._cursorLine -= 1;
       this._cursorCol = Math.min(this._cursorCol, (this._parts()[this._cursorLine] ?? "").length);
-      this._redraw();
+      this._dirty = true;
     }
   }
 
@@ -227,7 +231,7 @@ class LineEditor {
     if (this._cursorLine < parts.length - 1) {
       this._cursorLine += 1;
       this._cursorCol = Math.min(this._cursorCol, parts[this._cursorLine].length);
-      this._redraw();
+      this._dirty = true;
     }
   }
 
@@ -237,7 +241,7 @@ class LineEditor {
     // paste mode across chunk boundaries until ~150ms of silence, so large
     // pastes that the terminal delivers in chunks still keep their newlines.
     let inPaste = this._inPaste && Date.now() - prev < 150;
-    let prevWasCR = false;
+    let prevWasCR = this._prevWasCR;
     for (const ch of chunk) {
       const now = Date.now();
       const burst = now - prev < 40;
@@ -254,27 +258,29 @@ class LineEditor {
           // Stray Enter mid-turn: keep the input line empty.
           this._emit("");
         } else if (inPaste || this._inBracketPaste) {
-          // Newline inside a paste — keep it as a literal line break so the
-          // whole pasted block stays ONE input (like Claude Code / web input).
-          // Dedupe CRLF pairs (Windows clipboards paste \r\n).
+          // Newline inside a paste — literal line break, no submit.
           if (!(ch === "\n" && prevWasCR)) this._insert("\n");
           prevWasCR = ch === "\r";
+        } else if (this._enterTimer && ch === "\n" && this._enterWasCR) {
+          // Second half of a \r\n pair: the pending \r already covers it.
+          prevWasCR = false;
         } else {
-          // Manual Enter: submit the whole (possibly multi-line) input.
-          const line = this._line;
-          this._line = "";
-          this._cursorLine = 0;
-          this._cursorCol = 0;
-          process.stdout.write("\n");
-          this._remember(line);
-          this._emit(line);
+          // A newline not clearly part of a paste: defer the decision briefly.
+          // If more input follows, it was a paste newline; if silence, it was
+          // a manual Enter. This is robust for QuickEdit right-click paste,
+          // which types the text line-by-line with small delays.
+          this._flushPendingEnter();
+          this._enterWasCR = ch === "\r";
+          this._enterTimer = setTimeout(() => {
+            this._enterTimer = null;
+            this._submit();
+          }, 150);
         }
       } else if (ch === "\x7f" || ch === "\b") {
-        // Backspace (only while a question is pending).
+        this._flushPendingEnter();
         if (this._waiter !== null) this._backspace();
       } else if (ch === "\x1b") {
-        // Begin of an escape sequence (arrows, function keys, …): classify by
-        // the next byte, collect the CSI payload, dispatch on the final byte.
+        this._flushPendingEnter();
         this._esc = this._waiter !== null ? { kind: null, buf: "" } : null;
       } else if (this._esc) {
         const e = this._esc;
@@ -295,12 +301,36 @@ class LineEditor {
           else if (ch === "B") this._dispatchEscape("B");
         }
       } else if (ch >= " ") {
-        // Insert at the caret (only while a question is pending).
+        this._flushPendingEnter();
         if (this._waiter !== null) this._insert(ch);
       }
     }
     this._lastKey = prev;
     this._inPaste = inPaste;
+    this._prevWasCR = prevWasCR;
+    if (this._dirty) {
+      this._dirty = false;
+      this._redraw();
+    }
+  }
+
+  /** If a newline was deferred and more input arrived, it was a paste newline. */
+  _flushPendingEnter() {
+    if (this._enterTimer) {
+      clearTimeout(this._enterTimer);
+      this._enterTimer = null;
+      this._insert("\n");
+    }
+  }
+
+  _submit() {
+    const line = this._line;
+    this._line = "";
+    this._cursorLine = 0;
+    this._cursorCol = 0;
+    process.stdout.write("\n");
+    this._remember(line);
+    this._emit(line);
   }
 
   /** Handle a decoded CSI/SS3 key sequence (payload without the ESC [). */
@@ -339,6 +369,10 @@ class LineEditor {
         break;
       default:
         break; // Ctrl+arrows, F-keys, … — ignore
+    }
+    if (this._dirty) {
+      this._dirty = false;
+      this._redraw();
     }
   }
 
@@ -403,26 +437,53 @@ class LineEditor {
     }
   }
 
+  _rowsFor(parts) {
+    const cols = process.stdout.columns || 80;
+    let total = 0;
+    for (const line of parts) total += Math.max(1, Math.ceil(displayWidth(line) / cols));
+    return total;
+  }
+
+  _cursorVisualRow() {
+    const cols = process.stdout.columns || 80;
+    const parts = this._parts();
+    let row = 0;
+    for (let i = 0; i < this._cursorLine; i++) {
+      row += Math.max(1, Math.ceil(displayWidth(parts[i]) / cols));
+    }
+    const line = parts[this._cursorLine] ?? "";
+    row += Math.floor(displayWidth(line.slice(0, this._cursorCol)) / cols);
+    return row;
+  }
+
+  _cursorVisualCol() {
+    const cols = process.stdout.columns || 80;
+    const line = this._parts()[this._cursorLine] ?? "";
+    return displayWidth(line.slice(0, this._cursorCol)) % cols;
+  }
+
   _redraw() {
     const prompt = this._pendingPrompt ?? "";
     const parts = this._parts();
     const cursorLine = Math.min(this._cursorLine, parts.length - 1);
     const cursorCol = Math.min(this._cursorCol, parts[cursorLine].length);
-    // From the current row, move up to the top of the input block.
-    if (cursorLine > 0) process.stdout.write(`\x1b[${cursorLine}A`);
-    // Rewrite every line of the block, erasing each first.
+    const visRow = this._cursorVisualRow();
+    const visCol = this._cursorVisualCol();
+    const totalRows = this._rowsFor(parts);
+    // 1. Move up to the top of the input block (visual rows, wrapping-aware).
+    if (visRow > 0) process.stdout.write(`\x1b[${visRow}A`);
+    // 2. Go to column 1 and erase everything below (clears stale wrapped rows).
+    process.stdout.write("\x1b[1G\x1b[J");
+    // 3. Rewrite every line; the terminal handles wrapping.
     for (let i = 0; i < parts.length; i++) {
-      process.stdout.write(ansi.clearLine);
       if (i === 0) process.stdout.write(prompt);
       process.stdout.write(parts[i]);
       if (i < parts.length - 1) process.stdout.write("\r\n");
     }
-    // Cursor is at the end of the last line; move back up to the caret row.
-    const up = parts.length - 1 - cursorLine;
+    // 4. Cursor is at the end of the last line; move back to the caret row/col.
+    const up = totalRows - 1 - visRow;
     if (up > 0) process.stdout.write(`\x1b[${up}A`);
-    // Move left to the caret column (CJK-aware).
-    const after = parts[cursorLine].slice(cursorCol);
-    if (after.length > 0) process.stdout.write(`\x1b[${displayWidth(after)}D`);
+    process.stdout.write(`\x1b[${visCol + 1}G`);
   }
 
   /** Ask one question; resolves the trimmed line, or null on Ctrl+C. */
