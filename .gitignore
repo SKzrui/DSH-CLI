@@ -8,3 +8,4 @@ test-editor-pty.mjs
 
 .session-diag/
 test-editor-paste.mjs
+test-paste-pty.mjs
