@@ -94,6 +94,7 @@ class LineEditor {
     this._cursorCol = 0; // caret column within that row
     this._lastKey = 0; // timestamp of the last key event (paste detection)
     this._inPaste = false; // sticky paste window across chunks
+    this._inBracketPaste = false; // inside \x1b[200~…\x1b[201~ (bracketed paste)
     this._history = []; // submitted prompt lines (raw mode)
     this._histIdx = -1; // -1 = editing a fresh line, >= 0 = history entry
     this._draft = ""; // the fresh line saved while browsing history
@@ -117,6 +118,10 @@ class LineEditor {
       process.stdin.setEncoding("utf8");
       process.stdin.resume();
       process.stdin.on("data", (chunk) => this._onData(chunk));
+      // Bracketed paste: terminals wrap pasted text in \x1b[200~…\x1b[201~,
+      // so pasted newlines are unambiguous and never trigger a submit — the
+      // input box behaves like the web GUI's (paste, then Enter to send).
+      process.stdout.write("\x1b[?2004h");
     }
   }
 
@@ -248,9 +253,9 @@ class LineEditor {
         if (this._waiter === null) {
           // Stray Enter mid-turn: keep the input line empty.
           this._emit("");
-        } else if (inPaste) {
+        } else if (inPaste || this._inBracketPaste) {
           // Newline inside a paste — keep it as a literal line break so the
-          // whole pasted block stays ONE input (like Claude Code, no dialog).
+          // whole pasted block stays ONE input (like Claude Code / web input).
           // Dedupe CRLF pairs (Windows clipboards paste \r\n).
           if (!(ch === "\n" && prevWasCR)) this._insert("\n");
           prevWasCR = ch === "\r";
@@ -325,6 +330,12 @@ class LineEditor {
         break;
       case "3~": // Delete — remove the char at the caret
         this._delete();
+        break;
+      case "200~": // bracketed paste start — all newlines are literal
+        this._inBracketPaste = true;
+        break;
+      case "201~": // bracketed paste end
+        this._inBracketPaste = false;
         break;
       default:
         break; // Ctrl+arrows, F-keys, … — ignore
@@ -1305,6 +1316,7 @@ async function run(ctx, opts, exit) {
   // in a weird state.
   const restoreTerminal = () => {
     try {
+      process.stdout.write("\x1b[?2004l"); // disable bracketed paste
       if (process.stdin.isTTY && process.stdin.isRaw) process.stdin.setRawMode(false);
       process.stdin.pause();
     } catch {}
