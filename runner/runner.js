@@ -89,8 +89,11 @@ class LineEditor {
   constructor() {
     this._waiter = null; // { resolve, prompt }
     this._lines = []; // pending input lines (piped mode)
-    this._line = "";
-    this._cursor = 0; // caret position within _line (raw mode)
+    this._line = ""; // current input, may contain "\n" for multi-line pastes
+    this._cursorLine = 0; // caret row within _line (raw mode)
+    this._cursorCol = 0; // caret column within that row
+    this._lastKey = 0; // timestamp of the last key event (paste detection)
+    this._inPaste = false; // sticky paste window across chunks
     this._history = []; // submitted prompt lines (raw mode)
     this._histIdx = -1; // -1 = editing a fresh line, >= 0 = history entry
     this._draft = ""; // the fresh line saved while browsing history
@@ -117,8 +120,124 @@ class LineEditor {
     }
   }
 
+  // --- multi-line editing helpers (raw mode) --------------------------------
+  _parts() {
+    return this._line.split("\n");
+  }
+
+  _endOfLine() {
+    const parts = this._parts();
+    this._cursorLine = parts.length - 1;
+    this._cursorCol = parts[parts.length - 1].length;
+  }
+
+  /** Insert one char at the caret; "\n" splits the line (paste keeps newlines). */
+  _insert(ch) {
+    const parts = this._parts();
+    const line = parts[this._cursorLine] ?? "";
+    const col = Math.min(this._cursorCol, line.length);
+    if (ch === "\n") {
+      parts.splice(this._cursorLine, 1, line.slice(0, col), line.slice(col));
+      this._cursorLine += 1;
+      this._cursorCol = 0;
+    } else {
+      parts[this._cursorLine] = line.slice(0, col) + ch + line.slice(col);
+      this._cursorCol = col + 1;
+    }
+    this._line = parts.join("\n");
+    this._redraw();
+  }
+
+  _backspace() {
+    const parts = this._parts();
+    const line = parts[this._cursorLine] ?? "";
+    const col = this._cursorCol;
+    if (col > 0) {
+      parts[this._cursorLine] = line.slice(0, col - 1) + line.slice(col);
+      this._cursorCol = col - 1;
+    } else if (this._cursorLine > 0) {
+      const prev = parts[this._cursorLine - 1];
+      parts.splice(this._cursorLine - 1, 2, prev + line);
+      this._cursorLine -= 1;
+      this._cursorCol = prev.length;
+    } else {
+      return;
+    }
+    this._line = parts.join("\n");
+    this._redraw();
+  }
+
+  _delete() {
+    const parts = this._parts();
+    const line = parts[this._cursorLine] ?? "";
+    const col = Math.min(this._cursorCol, line.length);
+    if (col < line.length) {
+      parts[this._cursorLine] = line.slice(0, col) + line.slice(col + 1);
+    } else if (this._cursorLine < parts.length - 1) {
+      parts.splice(this._cursorLine, 2, line + parts[this._cursorLine + 1]);
+    } else {
+      return;
+    }
+    this._line = parts.join("\n");
+    this._redraw();
+  }
+
+  _cursorLeft() {
+    const parts = this._parts();
+    if (this._cursorCol > 0) {
+      this._cursorCol -= 1;
+    } else if (this._cursorLine > 0) {
+      this._cursorLine -= 1;
+      this._cursorCol = parts[this._cursorLine].length;
+    } else {
+      return;
+    }
+    this._redraw();
+  }
+
+  _cursorRight() {
+    const parts = this._parts();
+    const line = parts[this._cursorLine] ?? "";
+    if (this._cursorCol < line.length) {
+      this._cursorCol += 1;
+    } else if (this._cursorLine < parts.length - 1) {
+      this._cursorLine += 1;
+      this._cursorCol = 0;
+    } else {
+      return;
+    }
+    this._redraw();
+  }
+
+  _cursorUp() {
+    if (this._cursorLine > 0) {
+      this._cursorLine -= 1;
+      this._cursorCol = Math.min(this._cursorCol, (this._parts()[this._cursorLine] ?? "").length);
+      this._redraw();
+    }
+  }
+
+  _cursorDown() {
+    const parts = this._parts();
+    if (this._cursorLine < parts.length - 1) {
+      this._cursorLine += 1;
+      this._cursorCol = Math.min(this._cursorCol, parts[this._cursorLine].length);
+      this._redraw();
+    }
+  }
+
   _onData(chunk) {
+    let prev = this._lastKey;
+    // Sticky paste window: once a burst is seen (chars < 40ms apart), stay in
+    // paste mode across chunk boundaries until ~150ms of silence, so large
+    // pastes that the terminal delivers in chunks still keep their newlines.
+    let inPaste = this._inPaste && Date.now() - prev < 150;
+    let prevWasCR = false;
     for (const ch of chunk) {
+      const now = Date.now();
+      const burst = now - prev < 40;
+      prev = now;
+      if (burst) inPaste = true;
       if (ch === "\x03") {
         // Ctrl+C
         this._handleInterrupt();
@@ -126,20 +245,28 @@ class LineEditor {
         // Ctrl+D — treat as EOF: interrupt the pending question like Ctrl+C.
         this._handleInterrupt();
       } else if (ch === "\r" || ch === "\n") {
-        const line = this._line;
-        this._line = "";
-        this._cursor = 0;
-        process.stdout.write("\n");
-        this._remember(line);
-        this._emit(line);
-      } else if (ch === "\x7f" || ch === "\b") {
-        // Backspace: remove the char before the caret (only while a question
-        // is pending — mid-turn keystrokes must not corrupt streamed output).
-        if (this._waiter !== null && this._cursor > 0) {
-          this._line = this._line.slice(0, this._cursor - 1) + this._line.slice(this._cursor);
-          this._cursor -= 1;
-          this._redraw();
+        if (this._waiter === null) {
+          // Stray Enter mid-turn: keep the input line empty.
+          this._emit("");
+        } else if (inPaste) {
+          // Newline inside a paste — keep it as a literal line break so the
+          // whole pasted block stays ONE input (like Claude Code, no dialog).
+          // Dedupe CRLF pairs (Windows clipboards paste \r\n).
+          if (!(ch === "\n" && prevWasCR)) this._insert("\n");
+          prevWasCR = ch === "\r";
+        } else {
+          // Manual Enter: submit the whole (possibly multi-line) input.
+          const line = this._line;
+          this._line = "";
+          this._cursorLine = 0;
+          this._cursorCol = 0;
+          process.stdout.write("\n");
+          this._remember(line);
+          this._emit(line);
         }
+      } else if (ch === "\x7f" || ch === "\b") {
+        // Backspace (only while a question is pending).
+        if (this._waiter !== null) this._backspace();
       } else if (ch === "\x1b") {
         // Begin of an escape sequence (arrows, function keys, …): classify by
         // the next byte, collect the CSI payload, dispatch on the final byte.
@@ -164,49 +291,40 @@ class LineEditor {
         }
       } else if (ch >= " ") {
         // Insert at the caret (only while a question is pending).
-        if (this._waiter !== null) {
-          this._line = this._line.slice(0, this._cursor) + ch + this._line.slice(this._cursor);
-          this._cursor += 1;
-          this._redraw();
-        }
+        if (this._waiter !== null) this._insert(ch);
       }
     }
+    this._lastKey = prev;
+    this._inPaste = inPaste;
   }
 
   /** Handle a decoded CSI/SS3 key sequence (payload without the ESC [). */
   _dispatchEscape(seq) {
     switch (seq) {
-      case "A": // ↑ — previous history entry
-        this._historyUp();
+      case "A": // ↑ — move up a line; on the top line, browse history
+        if (this._parts().length > 1) this._cursorUp();
+        else this._historyUp();
         break;
-      case "B": // ↓ — next history entry / back to the draft
-        this._historyDown();
+      case "B": // ↓ — move down a line; on the last line, history forward
+        if (this._parts().length > 1 && this._cursorLine < this._parts().length - 1) this._cursorDown();
+        else this._historyDown();
         break;
       case "C": // →
-        if (this._cursor < this._line.length) {
-          this._cursor += 1;
-          this._redraw();
-        }
+        this._cursorRight();
         break;
       case "D": // ←
-        if (this._cursor > 0) {
-          this._cursor -= 1;
-          this._redraw();
-        }
+        this._cursorLeft();
         break;
-      case "H": // Home
-        this._cursor = 0;
+      case "H": // Home — start of the current line
+        this._cursorCol = 0;
         this._redraw();
         break;
-      case "F": // End
-        this._cursor = this._line.length;
+      case "F": // End — end of the current line
+        this._cursorCol = (this._parts()[this._cursorLine] ?? "").length;
         this._redraw();
         break;
       case "3~": // Delete — remove the char at the caret
-        if (this._cursor < this._line.length) {
-          this._line = this._line.slice(0, this._cursor) + this._line.slice(this._cursor + 1);
-          this._redraw();
-        }
+        this._delete();
         break;
       default:
         break; // Ctrl+arrows, F-keys, … — ignore
@@ -219,7 +337,7 @@ class LineEditor {
     if (this._histIdx < this._history.length - 1) {
       this._histIdx += 1;
       this._line = this._history[this._history.length - 1 - this._histIdx];
-      this._cursor = this._line.length;
+      this._endOfLine();
       this._redraw();
     }
   }
@@ -228,7 +346,7 @@ class LineEditor {
     if (this._histIdx === -1) return;
     this._histIdx -= 1;
     this._line = this._histIdx === -1 ? this._draft : this._history[this._history.length - 1 - this._histIdx];
-    this._cursor = this._line.length;
+    this._endOfLine();
     this._redraw();
   }
 
@@ -264,6 +382,8 @@ class LineEditor {
     if (w) {
       this._waiter = null;
       this._line = "";
+      this._cursorLine = 0;
+      this._cursorCol = 0;
       process.stdout.write("\n");
       w.resolve(null); // null = interrupted answer
     } else {
@@ -274,9 +394,23 @@ class LineEditor {
 
   _redraw() {
     const prompt = this._pendingPrompt ?? "";
-    process.stdout.write(ansi.clearLine + prompt + this._line);
-    // Put the caret back where it belongs (CJK-aware column math).
-    const after = this._line.slice(this._cursor);
+    const parts = this._parts();
+    const cursorLine = Math.min(this._cursorLine, parts.length - 1);
+    const cursorCol = Math.min(this._cursorCol, parts[cursorLine].length);
+    // From the current row, move up to the top of the input block.
+    if (cursorLine > 0) process.stdout.write(`\x1b[${cursorLine}A`);
+    // Rewrite every line of the block, erasing each first.
+    for (let i = 0; i < parts.length; i++) {
+      process.stdout.write(ansi.clearLine);
+      if (i === 0) process.stdout.write(prompt);
+      process.stdout.write(parts[i]);
+      if (i < parts.length - 1) process.stdout.write("\r\n");
+    }
+    // Cursor is at the end of the last line; move back up to the caret row.
+    const up = parts.length - 1 - cursorLine;
+    if (up > 0) process.stdout.write(`\x1b[${up}A`);
+    // Move left to the caret column (CJK-aware).
+    const after = parts[cursorLine].slice(cursorCol);
     if (after.length > 0) process.stdout.write(`\x1b[${displayWidth(after)}D`);
   }
 

@@ -7,3 +7,4 @@ node_modules/
 test-editor-pty.mjs
 
 .session-diag/
+test-editor-paste.mjs
