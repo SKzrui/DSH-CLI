@@ -9,3 +9,6 @@ test-editor-pty.mjs
 .session-diag/
 test-editor-paste.mjs
 test-paste-pty.mjs
+test-editor-caret.mjs
+test-editor-flicker.mjs
+test-table-align.mjs

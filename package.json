@@ -1,6 +1,6 @@
 {
   "name": "@harmattan666/dcli",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "description": "dcli — DeepSeek agent 命令行工具，一条命令启动，无需端口",
   "type": "module",
   "bin": {
