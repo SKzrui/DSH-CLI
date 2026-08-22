@@ -12,7 +12,14 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const requireFromHere = createRequire(import.meta.url);
-const VERSION = "0.1.2";
+// Single source of truth: report the version from this package's manifest.
+const VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 // The dsh launcher owns `--version` for itself; intercept ours so `dcli
 // --version` reports dcli, not the harness — and touches nothing on disk.
@@ -80,6 +87,8 @@ const PROFILE_PATCH = `# dcli — interactive agent profile for the DeepSeek Har
 - insert:
     - id: cli-runner
       name: './runner.js'
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
 `;
 
 const PROFILE_MANIFEST = JSON.stringify(
