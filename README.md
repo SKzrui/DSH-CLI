@@ -1,6 +1,6 @@
 # DSH-CLI (dcli) — a simple CLI for the DeepSeek Harness
 
-> **DSH-CLI**是一款简洁的命令行工具，可在终端内与 DeepSeek Harness 对话：一条命令即可启动，无需部署服务、无需占用端口，对话结束后自动退出。支持流式输出、工具调用、按目录独立恢复会话，同时支持 API Key 与模型参数配置。
+> **DSH-CLI**是一款简洁的命令行工具，可在终端内与 DeepSeek Harness 对话：一条命令即可启动，无需部署服务、无需占用端口。支持流式输出、工具调用、按目录独立恢复会话，同时支持 API Key 与模型参数配置。
 
 **dcli** is a simple command-line tool for chatting with the DeepSeek Harness in
 your terminal: one command to start, no server, no port, done when you are.
